@@ -1,0 +1,24 @@
+# Kalshi Trading Bot - Dependencies
+# Core async HTTP and data processing
+aiohttp>=3.9.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# API and environment management
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Data scraping and parsing (for fair value models)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Logging and monitoring
+colorlog>=6.7.0
+
+# Rate limiting and backoff
+aiolimiter>=1.1.0
+backoff>=2.2.0
+
+# Optional: Advanced features
+# scikit-learn>=1.3.0  # For ML-based fair value models
+# selenium>=4.15.0  # For dynamic scraping if needed
