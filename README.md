@@ -30,15 +30,19 @@ This bot embodies Michael Beer's approach from his [F1 trading bot demo](https:/
 
 ### 2. Installation
 
-```powershell
-# Clone or navigate to project directory
-cd "c:\Users\jgons\Agents\Kalshi Trading"
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/kalshi-trading-bot.git
+cd kalshi-trading-bot
 
 # Create virtual environment
 python -m venv venv
 
-# Activate venv
+# Activate venv (Windows)
 .\venv\Scripts\Activate.ps1
+
+# Activate venv (Linux/Mac)
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -46,7 +50,7 @@ pip install -r requirements.txt
 
 ### 3. Configuration
 
-```powershell
+```bash
 # Copy template and add your API keys
 cp .env.example .env
 
@@ -244,8 +248,8 @@ async def _calculate_politics_fair_value(self, query: str, market: dict) -> floa
 # Example: AWS EC2 Ubuntu
 sudo apt update
 sudo apt install python3.10 python3.10-venv
-git clone <your-repo>
-cd Kalshi-Trading
+git clone https://github.com/yourusername/kalshi-trading-bot.git
+cd kalshi-trading-bot
 python3.10 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt

@@ -14,13 +14,13 @@ class Config:
     
     # API Configuration
     KALSHI_API_KEY: str = os.getenv('KALSHI_API_KEY', '')
-    KALSHI_API_SECRET: str = os.getenv('KALSHI_API_SECRET', '')
+    KALSHI_PRIVATE_KEY_PATH: str = os.getenv('KALSHI_PRIVATE_KEY_PATH', '')
     KALSHI_ENV: Literal['demo', 'prod'] = os.getenv('KALSHI_ENV', 'demo')
     
-    # API URLs
+    # API URLs (base domain; include full path in requests)
     KALSHI_BASE_URL: str = (
-        'https://demo-api.kalshi.co/trade-api/v2' if KALSHI_ENV == 'demo'
-        else 'https://trading-api.kalshi.com/trade-api/v2'
+        'https://demo-api.kalshi.co' if KALSHI_ENV == 'demo'
+        else 'https://api.elections.kalshi.com'
     )
     
     NEWS_API_KEY: str = os.getenv('NEWS_API_KEY', '')
@@ -52,8 +52,8 @@ class Config:
         
         if not cls.KALSHI_API_KEY:
             errors.append("KALSHI_API_KEY not set")
-        if not cls.KALSHI_API_SECRET:
-            errors.append("KALSHI_API_SECRET not set")
+        if not cls.KALSHI_PRIVATE_KEY_PATH:
+            errors.append("KALSHI_PRIVATE_KEY_PATH not set")
         if cls.KALSHI_ENV not in ['demo', 'prod']:
             errors.append("KALSHI_ENV must be 'demo' or 'prod'")
         

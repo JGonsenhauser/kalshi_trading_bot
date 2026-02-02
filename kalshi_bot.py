@@ -21,8 +21,15 @@ from aiolimiter import AsyncLimiter
 from config import Config
 from risk_manager import RiskManager
 from fair_value import FairValueEngine
+from kalshi_auth import KalshiAuth
 
-# Setup colored logging
+# Setup colored logging with UTF-8 encoding for emoji support on Windows
+import sys
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 handler = colorlog.StreamHandler()
 handler.setFormatter(colorlog.ColoredFormatter(
     '%(log_color)s%(asctime)s - %(levelname)s - %(message)s',
@@ -55,6 +62,7 @@ class KalshiBot:
     
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
+        self.auth = KalshiAuth(Config.KALSHI_API_KEY, Config.KALSHI_PRIVATE_KEY_PATH)
         self.risk_manager = RiskManager(
             initial_balance=Config.INITIAL_BALANCE,
             risk_per_trade_pct=Config.RISK_PER_TRADE_PCT,
@@ -72,13 +80,8 @@ class KalshiBot:
     
     async def initialize(self):
         """Setup async session with auth"""
-        headers = {
-            'Authorization': f'Bearer {Config.KALSHI_API_KEY}',
-            'Content-Type': 'application/json',
-        }
         self.session = aiohttp.ClientSession(
             base_url=Config.KALSHI_BASE_URL,
-            headers=headers,
             timeout=aiohttp.ClientTimeout(total=30)
         )
         await self.fair_value_engine.initialize()
@@ -99,7 +102,8 @@ class KalshiBot:
         """
         async with self.rate_limiter:
             try:
-                async with self.session.request(method, endpoint, **kwargs) as resp:
+                headers = self.auth.get_auth_headers(method, endpoint)
+                async with self.session.request(method, endpoint, headers=headers, **kwargs) as resp:
                     if resp.status == 200:
                         return await resp.json()
                     elif resp.status == 401:
@@ -114,7 +118,7 @@ class KalshiBot:
     
     async def fetch_balance(self) -> float:
         """Get current account balance"""
-        data = await self._api_request('GET', '/portfolio/balance')
+        data = await self._api_request('GET', '/trade-api/v2/portfolio/balance')
         if data and 'balance' in data:
             balance = float(data['balance']) / 100  # Kalshi uses cents
             self.risk_manager.update_balance(balance)
@@ -123,14 +127,14 @@ class KalshiBot:
     
     async def list_markets(self, status: str = 'open', limit: int = 100) -> List[dict]:
         """Fetch open markets - scan for opportunities"""
-        data = await self._api_request('GET', '/markets', params={'status': status, 'limit': limit})
+        data = await self._api_request('GET', '/trade-api/v2/markets', params={'status': status, 'limit': limit})
         if data and 'markets' in data:
             return data['markets']
         return []
     
     async def get_market_details(self, market_id: str) -> Optional[dict]:
         """Get detailed market data"""
-        return await self._api_request('GET', f'/markets/{market_id}')
+        return await self._api_request('GET', f'/trade-api/v2/markets/{market_id}')
     
     async def place_order(self, market_id: str, side: str, count: int, order_type: str = 'market') -> bool:
         """
@@ -145,7 +149,7 @@ class KalshiBot:
             'type': order_type,  # 'market' for speed
         }
         
-        data = await self._api_request('POST', '/orders', json=payload)
+        data = await self._api_request('POST', '/trade-api/v2/orders', json=payload)
         
         if data and data.get('order'):
             logger.info(f"✅ ORDER FILLED: {market_id} {side} x{count}")
@@ -182,7 +186,7 @@ class KalshiBot:
                 break
             
             # Skip if already have position
-            if market['id'] in self.risk_manager.positions:
+            if market.get('ticker') in self.risk_manager.positions:
                 continue
             
             # Check if can open new position
@@ -220,9 +224,9 @@ class KalshiBot:
                         )
                         
                         # Execute trade
-                        if await self.place_order(market['id'], side, int(size)):
+                        if await self.place_order(market.get('ticker'), side, int(size)):
                             self.risk_manager.add_position(
-                                market_id=market['id'],
+                                market_id=market.get('ticker'),
                                 side=side,
                                 size=size,
                                 entry_price=entry_price,
@@ -231,6 +235,55 @@ class KalshiBot:
             
             except Exception as e:
                 logger.error(f"Error processing {market.get('title', 'unknown')}: {e}")
+    
+    def print_portfolio_dashboard(self):
+        """Print formatted portfolio summary dashboard"""
+        summary = self.risk_manager.get_portfolio_summary()
+        positions = self.risk_manager.positions
+        
+        # Header
+        status_emoji = "🟢" if not summary['halted'] else "🔴"
+        status_text = "TRADING" if not summary['halted'] else f"HALTED: {summary['halt_reason']}"
+        
+        logger.info("=" * 80)
+        logger.info(f"{status_emoji} PORTFOLIO SNAPSHOT @ {datetime.now().strftime('%H:%M:%S')}")
+        logger.info("=" * 80)
+        
+        # Main metrics
+        drawdown_pct = summary['total_drawdown_pct']
+        drawdown_color = "↑" if drawdown_pct >= 0 else "↓"
+        logger.info(
+            f"💰 Balance: ${summary['balance']:,.2f} | "
+            f"Peak: ${summary['peak_balance']:,.2f} | "
+            f"Total DD: {drawdown_color}{abs(drawdown_pct):.2%}"
+        )
+        
+        # Daily performance
+        daily_emoji = "📈" if summary['daily_pnl'] >= 0 else "📉"
+        logger.info(
+            f"{daily_emoji} Daily P&L: ${summary['daily_pnl']:+,.2f} ({summary['daily_pnl_pct']:+.2%}) | "
+            f"Unrealized: ${summary['unrealized_pnl']:+,.2f} | "
+            f"Open Positions: {summary['open_positions']}/{self.risk_manager.max_positions}"
+        )
+        
+        # Position details
+        if positions:
+            logger.info("-" * 80)
+            for market_id, pos in positions.items():
+                pnl = pos.pnl()
+                pnl_emoji = "✅" if pnl >= 0 else "❌"
+                edge_loss = pos.edge_deterioration()
+                
+                logger.info(
+                    f"{pnl_emoji} {market_id.upper()[:15]:15} | {pos.side.upper():3} x{pos.size:.0f} | "
+                    f"Entry: ${pos.entry_price:.4f} | Current: ${pos.current_price:.4f} | "
+                    f"P&L: ${pnl:+.2f} | Edge Loss: {edge_loss:.2%}"
+                )
+        else:
+            logger.info("-" * 80)
+            logger.info("No open positions")
+        
+        logger.info("=" * 80)
     
     async def monitor_positions(self):
         """
@@ -319,16 +372,10 @@ class KalshiBot:
                 # Monitor existing positions
                 await self.monitor_positions()
                 
-                # Portfolio summary every 10 loops
+                # Portfolio summary dashboard every 5 minutes (every 10 loops at 30s interval)
                 if self.loop_count % 10 == 0:
                     await self.fetch_balance()
-                    summary = self.risk_manager.get_portfolio_summary()
-                    logger.info(
-                        f"📊 PORTFOLIO | Balance: ${summary['balance']:,.2f} | "
-                        f"Daily P&L: ${summary['daily_pnl']:+,.2f} ({summary['daily_pnl_pct']:+.2%}) | "
-                        f"Positions: {summary['open_positions']} | "
-                        f"Status: {'HALTED' if summary['halted'] else 'ACTIVE'}"
-                    )
+                    self.print_portfolio_dashboard()
                 
                 # Sleep before next scan
                 await asyncio.sleep(Config.SCAN_INTERVAL_SECONDS)
